@@ -50,7 +50,11 @@ pub fn get_worktree_path(project_root: &Path, name: &str) -> Result<PathBuf> {
     let worktree_path = trees_dir.join(name);
 
     if !worktree_path.exists() {
-        anyhow::bail!("Worktree '{}' does not exist", name);
+        anyhow::bail!(
+            "Worktree '{}' does not exist.\n{}",
+            name,
+            format_worktree_list(project_root)?
+        );
     }
 
     Ok(worktree_path)
@@ -87,8 +91,14 @@ pub fn detect_current_worktree(project_root: &Path) -> Result<Option<String>> {
 pub fn resolve_worktree_name(project_root: &Path, name: Option<&str>) -> Result<String> {
     match name {
         Some(n) => Ok(n.to_string()),
-        None => detect_current_worktree(project_root)?
-            .ok_or_else(|| anyhow::anyhow!("Not inside a worktree. Please specify a worktree name.")),
+        None => detect_current_worktree(project_root)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Not inside a worktree. Please specify a worktree name.\n{}",
+                format_worktree_list(project_root).unwrap_or_else(|err| {
+                    format!("Failed to list worktrees: {}", err)
+                })
+            )
+        }),
     }
 }
 
@@ -182,6 +192,24 @@ pub fn list_worktrees(project_root: &Path) -> Result<Vec<Worktree>> {
     }
 
     Ok(worktrees)
+}
+
+fn format_worktree_list(project_root: &Path) -> Result<String> {
+    let worktrees = list_worktrees(project_root)?;
+    if worktrees.is_empty() {
+        return Ok("No worktrees found.".to_string());
+    }
+
+    let mut output = String::from("Current worktrees:\n");
+    for wt in worktrees {
+        output.push_str(&format!(
+            "  {}\t{}\t{}\n",
+            wt.name,
+            wt.branch,
+            wt.path.display()
+        ));
+    }
+    Ok(output.trim_end().to_string())
 }
 
 pub fn add_worktree(
