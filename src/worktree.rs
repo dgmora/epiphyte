@@ -3,8 +3,10 @@ use inquire::error::InquireError;
 use inquire::Select;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tabwriter::TabWriter;
 
 use crate::config::{get_trees_dir, Config, FileEntry, LinkType};
 
@@ -411,16 +413,22 @@ fn format_worktree_list(project_root: &Path) -> Result<String> {
         return Ok("No worktrees found.".to_string());
     }
 
-    let mut output = String::from("Current worktrees:\n");
+    let mut output = Vec::new();
+    output.extend_from_slice(b"Current worktrees:\n");
+
+    let mut writer = TabWriter::new(&mut output);
     for wt in worktrees {
-        output.push_str(&format!(
-            "  {}\t{}\t{}\n",
+        writeln!(
+            writer,
+            "  {}\t{}\t{}",
             wt.name,
             wt.branch,
             wt.path.display()
-        ));
+        )?;
     }
-    Ok(output.trim_end().to_string())
+    writer.flush()?;
+
+    Ok(String::from_utf8_lossy(&output).trim_end().to_string())
 }
 
 pub fn add_worktree(

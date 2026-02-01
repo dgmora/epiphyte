@@ -11,3 +11,4 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 anyhow = "1"
 inquire = "0.6"
+tabwriter = "1.4"

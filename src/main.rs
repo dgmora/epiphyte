@@ -4,7 +4,9 @@ mod worktree;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use inquire::{error::InquireError, MultiSelect};
+use std::io::Write;
 use std::path::Path;
+use tabwriter::TabWriter;
 
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
@@ -135,9 +137,19 @@ fn main() -> Result<()> {
             if worktrees.is_empty() {
                 println!("No worktrees found");
             } else {
+                let mut output = Vec::new();
+                let mut writer = TabWriter::new(&mut output);
                 for wt in worktrees {
-                    println!("{}\t{}\t{}", wt.name, wt.branch, wt.path.display());
+                    writeln!(
+                        writer,
+                        "{}\t{}\t{}",
+                        wt.name,
+                        wt.branch,
+                        wt.path.display()
+                    )?;
                 }
+                writer.flush()?;
+                print!("{}", String::from_utf8_lossy(&output));
             }
         }
 
@@ -323,13 +335,17 @@ fn main() -> Result<()> {
                     if config.files.is_empty() {
                         println!("No files configured");
                     } else {
+                        let mut output = Vec::new();
+                        let mut writer = TabWriter::new(&mut output);
                         for entry in &config.files {
                             let link_type = match entry.link_type {
                                 LinkType::Copy => "copy",
                                 LinkType::Symlink => "symlink",
                             };
-                            println!("{}\t[{}]", entry.path, link_type);
+                            writeln!(writer, "{}\t[{}]", entry.path, link_type)?;
                         }
+                        writer.flush()?;
+                        print!("{}", String::from_utf8_lossy(&output));
                     }
                 }
             }
