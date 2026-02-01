@@ -7,8 +7,8 @@ use clap::{Parser, Subcommand};
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
-    get_worktree_path, list_worktrees, relink_worktree, resolve_worktree_name,
-    select_worktree_name,
+    get_worktree_path, is_path_tracked, list_worktrees, relink_worktree,
+    resolve_worktree_name, select_worktree_name,
 };
 
 #[derive(Parser)]
@@ -168,6 +168,12 @@ fn main() -> Result<()> {
                     // Check if already exists
                     if config.files.iter().any(|f| f.path == path) {
                         anyhow::bail!("File '{}' is already in the configuration", path);
+                    }
+                    if is_path_tracked(&project_root, &path)? {
+                        anyhow::bail!(
+                            "File '{}' is tracked by git; only untracked files can be added",
+                            path
+                        );
                     }
 
                     config.files.push(FileEntry {

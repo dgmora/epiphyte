@@ -34,6 +34,16 @@ pub fn branch_exists(project_root: &Path, branch_name: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
+pub fn is_path_tracked(project_root: &Path, path: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .current_dir(project_root)
+        .output()
+        .context("Failed to run git ls-files")?;
+
+    Ok(output.status.success())
+}
+
 pub fn ensure_on_main_branch(project_root: &Path, main_branch: &str) -> Result<()> {
     let current = get_current_branch(project_root)?;
     if current != main_branch {
