@@ -277,10 +277,7 @@ fn select_ignored_files(
         return Ok(Vec::new());
     }
 
-    let defaults: Vec<usize> = (0..candidates.len()).collect();
-    let selection = MultiSelect::new("Select root ignored files to add", candidates)
-        .with_default(&defaults)
-        .prompt();
+    let selection = MultiSelect::new("Select root ignored files to add", candidates).prompt();
 
     let selected = match selection {
         Ok(files) => files,
