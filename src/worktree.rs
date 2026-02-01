@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::{get_trees_dir, Config, LinkType};
+use crate::config::{get_trees_dir, Config, FileEntry, LinkType};
 
 pub fn get_current_branch(project_root: &Path) -> Result<String> {
     let output = Command::new("git")
@@ -169,6 +169,12 @@ pub struct SymlinkRemovalReport {
     pub failed: Vec<(String, PathBuf, String)>,
 }
 
+#[derive(Default)]
+pub struct LinkReport {
+    pub linked: Vec<(String, PathBuf)>,
+    pub failed: Vec<(String, PathBuf, String)>,
+}
+
 impl std::fmt::Display for Worktree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.branch.is_empty() {
@@ -284,6 +290,45 @@ pub fn remove_symlinks_from_worktrees(
     Ok(SymlinkRemovalReport { removed, failed })
 }
 
+pub fn link_entries_to_worktrees(
+    project_root: &Path,
+    entries: &[FileEntry],
+) -> Result<LinkReport> {
+    let worktrees = list_worktrees(project_root)?;
+    let mut report = LinkReport::default();
+
+    if worktrees.is_empty() || entries.is_empty() {
+        return Ok(report);
+    }
+
+    for entry in entries {
+        let src = project_root.join(&entry.path);
+        if !src.exists() {
+            eprintln!(
+                "Warning: source file does not exist: {}",
+                src.display()
+            );
+            continue;
+        }
+
+        for worktree in &worktrees {
+            let dst = worktree.path.join(&entry.path);
+            match link_entry(&src, &dst, &entry.link_type) {
+                Ok(()) => report
+                    .linked
+                    .push((worktree.name.clone(), dst)),
+                Err(err) => report.failed.push((
+                    worktree.name.clone(),
+                    dst,
+                    err.to_string(),
+                )),
+            }
+        }
+    }
+
+    Ok(report)
+}
+
 pub fn select_worktree_name(project_root: &Path) -> Result<Option<String>> {
     let worktrees = list_worktrees(project_root)?;
     if worktrees.is_empty() {
@@ -384,46 +429,52 @@ fn link_files(project_root: &Path, worktree_path: &Path, config: &Config) -> Res
             continue;
         }
 
-        // Create parent directories for destination
-        if let Some(parent) = dst.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create parent dir: {}", parent.display()))?;
-        }
+        link_entry(&src, &dst, &entry.link_type)?;
+    }
 
-        // Remove existing destination if it exists
-        if dst.exists() || dst.symlink_metadata().is_ok() {
-            if dst.is_dir() && !dst.symlink_metadata()?.file_type().is_symlink() {
-                fs::remove_dir_all(&dst)?;
-            } else {
-                fs::remove_file(&dst)?;
-            }
-        }
+    Ok(())
+}
 
-        match entry.link_type {
-            LinkType::Symlink => {
-                #[cfg(unix)]
-                {
-                    std::os::unix::fs::symlink(&src, &dst).with_context(|| {
-                        format!("Failed to symlink {} -> {}", src.display(), dst.display())
-                    })?;
-                }
-                #[cfg(windows)]
-                {
-                    if src.is_dir() {
-                        std::os::windows::fs::symlink_dir(&src, &dst)?;
-                    } else {
-                        std::os::windows::fs::symlink_file(&src, &dst)?;
-                    }
-                }
+fn link_entry(src: &Path, dst: &Path, link_type: &LinkType) -> Result<()> {
+    // Create parent directories for destination
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create parent dir: {}", parent.display()))?;
+    }
+
+    // Remove existing destination if it exists
+    if dst.exists() || dst.symlink_metadata().is_ok() {
+        if dst.is_dir() && !dst.symlink_metadata()?.file_type().is_symlink() {
+            fs::remove_dir_all(dst)?;
+        } else {
+            fs::remove_file(dst)?;
+        }
+    }
+
+    match link_type {
+        LinkType::Symlink => {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(src, dst).with_context(|| {
+                    format!("Failed to symlink {} -> {}", src.display(), dst.display())
+                })?;
             }
-            LinkType::Copy => {
+            #[cfg(windows)]
+            {
                 if src.is_dir() {
-                    copy_dir_recursive(&src, &dst)?;
+                    std::os::windows::fs::symlink_dir(src, dst)?;
                 } else {
-                    fs::copy(&src, &dst).with_context(|| {
-                        format!("Failed to copy {} -> {}", src.display(), dst.display())
-                    })?;
+                    std::os::windows::fs::symlink_file(src, dst)?;
                 }
+            }
+        }
+        LinkType::Copy => {
+            if src.is_dir() {
+                copy_dir_recursive(src, dst)?;
+            } else {
+                fs::copy(src, dst).with_context(|| {
+                    format!("Failed to copy {} -> {}", src.display(), dst.display())
+                })?;
             }
         }
     }

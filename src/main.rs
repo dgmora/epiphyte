@@ -9,8 +9,9 @@ use std::path::Path;
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
-    get_worktree_path, is_path_tracked, list_ignored_files, list_worktrees, relink_worktree,
-    remove_symlinks_from_worktrees, resolve_worktree_name, select_worktree_name,
+    get_worktree_path, is_path_tracked, link_entries_to_worktrees, list_ignored_files,
+    list_worktrees, relink_worktree, remove_symlinks_from_worktrees, resolve_worktree_name,
+    select_worktree_name,
 };
 
 #[derive(Parser)]
@@ -212,16 +213,17 @@ fn main() -> Result<()> {
                         return Ok(());
                     }
 
-                    let count = paths.len();
-                    let single_path = paths.first().cloned();
-                    config.files.extend(
-                        paths
-                            .into_iter()
-                            .map(|path| FileEntry {
-                                path,
-                                link_type: link_type.clone(),
-                            }),
-                    );
+                    let new_entries: Vec<FileEntry> = paths
+                        .into_iter()
+                        .map(|path| FileEntry {
+                            path,
+                            link_type: link_type.clone(),
+                        })
+                        .collect();
+                    let count = new_entries.len();
+                    let single_path = new_entries.first().map(|entry| entry.path.clone());
+
+                    config.files.extend(new_entries.clone());
                     config.save(&project_root)?;
                     if count == 1 {
                         println!(
@@ -230,6 +232,28 @@ fn main() -> Result<()> {
                         );
                     } else {
                         println!("Added {} file(s) to configuration", count);
+                    }
+
+                    let report =
+                        link_entries_to_worktrees(&project_root, &new_entries)?;
+                    if report.linked.is_empty() {
+                        println!("No worktrees updated");
+                    } else {
+                        println!("Linked files to worktrees:");
+                        for (name, linked_path) in report.linked {
+                            println!("{}\t{}", name, linked_path.display());
+                        }
+                    }
+                    if !report.failed.is_empty() {
+                        eprintln!("Warning: failed to link some files:");
+                        for (name, failed_path, error) in report.failed {
+                            eprintln!(
+                                "{}\t{}\t{}",
+                                name,
+                                failed_path.display(),
+                                error
+                            );
+                        }
                     }
                 }
 
