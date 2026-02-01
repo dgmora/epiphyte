@@ -238,37 +238,6 @@ pub fn add_worktree(
     Ok(worktree_path)
 }
 
-pub fn remove_worktree(project_root: &Path, name: &str, force: bool) -> Result<()> {
-    let trees_dir = get_trees_dir(project_root);
-    let worktree_path = trees_dir.join(name);
-
-    if !worktree_path.exists() {
-        anyhow::bail!("Worktree '{}' does not exist", name);
-    }
-
-    let mut args = vec!["worktree", "remove"];
-    if force {
-        args.push("--force");
-    }
-    let worktree_path_str = worktree_path.to_string_lossy().to_string();
-    args.push(&worktree_path_str);
-
-    let output = Command::new("git")
-        .args(&args)
-        .current_dir(project_root)
-        .output()
-        .context("Failed to run git worktree remove")?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "git worktree remove failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    Ok(())
-}
-
 fn link_files(project_root: &Path, worktree_path: &Path, config: &Config) -> Result<()> {
     for entry in &config.files {
         let src = project_root.join(&entry.path);

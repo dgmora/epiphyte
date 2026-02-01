@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, ensure_on_main_branch, enter_worktree, get_worktree_path, list_worktrees,
-    relink_worktree, remove_worktree, resolve_worktree_name,
+    relink_worktree, resolve_worktree_name,
 };
 
 #[derive(Parser)]
@@ -35,17 +35,6 @@ enum Commands {
         /// Enter the worktree in a new shell after creation
         #[arg(short, long)]
         enter: bool,
-    },
-
-    /// Remove a worktree
-    #[command(visible_alias = "rm")]
-    Remove {
-        /// Name of the worktree to remove (auto-detected if inside a worktree)
-        name: Option<String>,
-
-        /// Force removal even with uncommitted changes
-        #[arg(short, long)]
-        force: bool,
     },
 
     /// List all worktrees managed by epiphyte
@@ -121,12 +110,6 @@ fn main() -> Result<()> {
                 println!("Entering worktree...");
                 enter_worktree(&path)?;
             }
-        }
-
-        Commands::Remove { name, force } => {
-            let name = resolve_worktree_name(&project_root, name.as_deref())?;
-            remove_worktree(&project_root, &name, force)?;
-            println!("Removed worktree '{}'", name);
         }
 
         Commands::List => {
