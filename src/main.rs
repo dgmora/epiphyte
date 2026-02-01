@@ -38,6 +38,7 @@ enum Commands {
     },
 
     /// Remove a worktree
+    #[command(visible_alias = "rm")]
     Remove {
         /// Name of the worktree to remove (auto-detected if inside a worktree)
         name: Option<String>,
@@ -58,6 +59,7 @@ enum Commands {
     },
 
     /// Enter a worktree in a new shell
+    #[command(visible_alias = "e")]
     Enter {
         /// Name of the worktree to enter (auto-detected if inside a worktree)
         name: Option<String>,
@@ -81,6 +83,7 @@ enum FilesCommands {
     },
 
     /// Remove a file from the configuration
+    #[command(visible_alias = "rm")]
     Remove {
         /// Path to the file to remove
         path: String,
