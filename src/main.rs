@@ -1,7 +1,7 @@
 mod config;
 mod worktree;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use config::{find_project_root, Config, FileEntry, LinkType};
@@ -54,6 +54,9 @@ enum Commands {
         /// Name of the worktree to enter (auto-detected if inside a worktree)
         name: Option<String>,
     },
+
+    /// Enter the repository root in a new shell
+    Root,
 
     /// Manage files in the configuration
     #[command(subcommand)]
@@ -145,6 +148,16 @@ fn main() -> Result<()> {
             let path = get_worktree_path(&project_root, &name)?;
             println!("Entering worktree '{}' at {}", name, path.display());
             enter_worktree(&path)?;
+        }
+
+        Commands::Root => {
+            let current_dir =
+                std::env::current_dir().context("Failed to get current directory")?;
+            if current_dir == project_root {
+                return Ok(());
+            }
+            println!("Entering repo root at {}", project_root.display());
+            enter_worktree(&project_root)?;
         }
 
         Commands::Files(files_cmd) => {
