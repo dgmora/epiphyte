@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use inquire::error::InquireError;
 use inquire::Select;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -163,6 +164,11 @@ pub struct Worktree {
     pub branch: String,
 }
 
+pub struct SymlinkRemovalReport {
+    pub removed: Vec<(String, PathBuf)>,
+    pub failed: Vec<(String, PathBuf, String)>,
+}
+
 impl std::fmt::Display for Worktree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.branch.is_empty() {
@@ -246,6 +252,36 @@ pub fn list_worktrees(project_root: &Path) -> Result<Vec<Worktree>> {
     }
 
     Ok(worktrees)
+}
+
+pub fn remove_symlinks_from_worktrees(
+    project_root: &Path,
+    rel_path: &str,
+) -> Result<SymlinkRemovalReport> {
+    let worktrees = list_worktrees(project_root)?;
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+
+    for worktree in worktrees {
+        let Worktree { name, path, .. } = worktree;
+        let dst = path.join(rel_path);
+
+        match dst.symlink_metadata() {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    if let Err(err) = fs::remove_file(&dst) {
+                        failed.push((name, dst, err.to_string()));
+                    } else {
+                        removed.push((name, dst));
+                    }
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => failed.push((name, dst, err.to_string())),
+        }
+    }
+
+    Ok(SymlinkRemovalReport { removed, failed })
 }
 
 pub fn select_worktree_name(project_root: &Path) -> Result<Option<String>> {

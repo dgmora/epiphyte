@@ -10,7 +10,7 @@ use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
     get_worktree_path, is_path_tracked, list_ignored_files, list_worktrees, relink_worktree,
-    resolve_worktree_name, select_worktree_name,
+    remove_symlinks_from_worktrees, resolve_worktree_name, select_worktree_name,
 };
 
 #[derive(Parser)]
@@ -241,6 +241,22 @@ fn main() -> Result<()> {
                     }
                     config.save(&project_root)?;
                     println!("Removed '{}' from configuration", path);
+
+                    let report = remove_symlinks_from_worktrees(&project_root, &path)?;
+                    if report.removed.is_empty() {
+                        println!("No symlinks removed from worktrees");
+                    } else {
+                        println!("Removed symlinks from worktrees:");
+                        for (name, removed_path) in report.removed {
+                            println!("{}\t{}", name, removed_path.display());
+                        }
+                    }
+                    if !report.failed.is_empty() {
+                        eprintln!("Warning: failed to remove some symlinks:");
+                        for (name, failed_path, error) in report.failed {
+                            eprintln!("{}\t{}\t{}", name, failed_path.display(), error);
+                        }
+                    }
                 }
 
                 FilesCommands::List => {
