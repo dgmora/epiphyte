@@ -164,6 +164,11 @@ pub struct Worktree {
     pub branch: String,
 }
 
+struct GitWorktree {
+    path: PathBuf,
+    branch: String,
+}
+
 pub struct SymlinkRemovalReport {
     pub removed: Vec<(String, PathBuf)>,
     pub failed: Vec<(String, PathBuf, String)>,
@@ -193,71 +198,124 @@ impl std::fmt::Display for Worktree {
 
 pub fn list_worktrees(project_root: &Path) -> Result<Vec<Worktree>> {
     let trees_dir = get_trees_dir(project_root);
-    let mut worktrees = Vec::new();
-
     if !trees_dir.exists() {
-        return Ok(worktrees);
+        return Ok(Vec::new());
     }
 
-    let output = Command::new("git")
-        .args(["worktree", "list", "--porcelain"])
-        .current_dir(project_root)
-        .output()
-        .context("Failed to run git worktree list")?;
+    let worktrees = list_git_worktrees(project_root)?;
+    let mut managed = Vec::new();
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "git worktree list failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut current_path: Option<PathBuf> = None;
-    let mut current_branch: Option<String> = None;
-
-    for line in stdout.lines() {
-        if line.starts_with("worktree ") {
-            if let Some(path) = current_path.take() {
-                if path.starts_with(&trees_dir) {
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    worktrees.push(Worktree {
-                        name,
-                        path: path.clone(),
-                        branch: current_branch.take().unwrap_or_default(),
-                    });
-                }
-            }
-            current_path = Some(PathBuf::from(line.strip_prefix("worktree ").unwrap()));
-            current_branch = None;
-        } else if line.starts_with("branch ") {
-            current_branch = Some(
-                line.strip_prefix("branch refs/heads/")
-                    .unwrap_or(line.strip_prefix("branch ").unwrap())
-                    .to_string(),
-            );
-        }
-    }
-
-    // Handle the last entry
-    if let Some(path) = current_path {
-        if path.starts_with(&trees_dir) {
-            let name = path
+    for wt in worktrees {
+        if wt.path.starts_with(&trees_dir) {
+            let name = wt
+                .path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            worktrees.push(Worktree {
+            managed.push(Worktree {
                 name,
-                path,
-                branch: current_branch.unwrap_or_default(),
+                path: wt.path,
+                branch: wt.branch,
             });
         }
     }
 
-    Ok(worktrees)
+    Ok(managed)
+}
+
+pub struct ImportMove {
+    pub from: PathBuf,
+    pub to: PathBuf,
+    pub relink_error: Option<String>,
+}
+
+pub struct ImportSkip {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+pub struct ImportFailure {
+    pub path: PathBuf,
+    pub error: String,
+}
+
+#[derive(Default)]
+pub struct ImportReport {
+    pub moved: Vec<ImportMove>,
+    pub skipped: Vec<ImportSkip>,
+    pub failed: Vec<ImportFailure>,
+}
+
+pub fn import_all_worktrees(project_root: &Path, config: &Config) -> Result<ImportReport> {
+    let trees_dir = get_trees_dir(project_root);
+    fs::create_dir_all(&trees_dir)
+        .with_context(|| format!("Failed to create trees dir: {}", trees_dir.display()))?;
+
+    let worktrees = list_git_worktrees(project_root)?;
+    let mut report = ImportReport::default();
+
+    for wt in worktrees {
+        if wt.path == project_root {
+            report.skipped.push(ImportSkip {
+                path: wt.path,
+                reason: "main worktree".to_string(),
+            });
+            continue;
+        }
+        if wt.path.starts_with(&trees_dir) {
+            report.skipped.push(ImportSkip {
+                path: wt.path,
+                reason: "already managed".to_string(),
+            });
+            continue;
+        }
+
+        let src_path = wt.path;
+        let base_name = src_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "worktree".to_string());
+        let dest = unique_import_path(&trees_dir, &base_name);
+        let src_str = src_path.to_string_lossy().to_string();
+        let dest_str = dest.to_string_lossy().to_string();
+
+        let output = Command::new("git")
+            .args(["worktree", "move", &src_str, &dest_str])
+            .current_dir(project_root)
+            .output()
+            .context("Failed to run git worktree move")?;
+
+        if !output.status.success() {
+            report.failed.push(ImportFailure {
+                path: src_path,
+                error: format!(
+                    "git worktree move failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            });
+            continue;
+        }
+
+        let name = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let relink_error = if name.is_empty() {
+            Some("relink failed: unable to determine worktree name".to_string())
+        } else {
+            relink_worktree(project_root, &name, config)
+                .err()
+                .map(|err| format!("relink failed: {}", err))
+        };
+
+        report.moved.push(ImportMove {
+            from: src_path,
+            to: dest,
+            relink_error,
+        });
+    }
+
+    Ok(report)
 }
 
 pub fn remove_symlinks_from_worktrees(
@@ -508,4 +566,74 @@ pub fn relink_worktree(project_root: &Path, name: &str, config: &Config) -> Resu
     link_files(project_root, &worktree_path, config)?;
 
     Ok(())
+}
+
+fn list_git_worktrees(project_root: &Path) -> Result<Vec<GitWorktree>> {
+    let output = Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .context("Failed to run git worktree list")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<PathBuf> = None;
+    let mut current_branch: Option<String> = None;
+
+    for line in stdout.lines() {
+        if line.starts_with("worktree ") {
+            if let Some(path) = current_path.take() {
+                worktrees.push(GitWorktree {
+                    path,
+                    branch: current_branch.take().unwrap_or_default(),
+                });
+            }
+            current_path = Some(PathBuf::from(line.strip_prefix("worktree ").unwrap()));
+            current_branch = None;
+        } else if line.starts_with("branch ") {
+            current_branch = Some(
+                line.strip_prefix("branch refs/heads/")
+                    .unwrap_or(line.strip_prefix("branch ").unwrap())
+                    .to_string(),
+            );
+        }
+    }
+
+    if let Some(path) = current_path {
+        worktrees.push(GitWorktree {
+            path,
+            branch: current_branch.unwrap_or_default(),
+        });
+    }
+
+    Ok(worktrees)
+}
+
+fn unique_import_path(trees_dir: &Path, base_name: &str) -> PathBuf {
+    let base = if base_name.is_empty() {
+        "worktree"
+    } else {
+        base_name
+    };
+
+    let mut candidate = trees_dir.join(base);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let mut index = 2;
+    loop {
+        candidate = trees_dir.join(format!("{}-{}", base, index));
+        if !candidate.exists() {
+            return candidate;
+        }
+        index += 1;
+    }
 }

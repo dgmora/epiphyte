@@ -9,9 +9,9 @@ use std::path::Path;
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
-    get_worktree_path, is_path_tracked, link_entries_to_worktrees, list_ignored_files,
-    list_worktrees, relink_worktree, remove_symlinks_from_worktrees, resolve_worktree_name,
-    select_worktree_name,
+    get_worktree_path, import_all_worktrees, is_path_tracked, link_entries_to_worktrees,
+    list_ignored_files, list_worktrees, relink_worktree, remove_symlinks_from_worktrees,
+    resolve_worktree_name, select_worktree_name,
 };
 
 #[derive(Parser)]
@@ -49,6 +49,13 @@ enum Commands {
     Relink {
         /// Name of the worktree to relink (auto-detected if inside a worktree)
         name: Option<String>,
+    },
+
+    /// Import existing worktrees into epiphyte
+    Import {
+        /// Import all worktrees not managed by epiphyte
+        #[arg(long)]
+        all: bool,
     },
 
     /// Enter a worktree in a new shell
@@ -139,6 +146,35 @@ fn main() -> Result<()> {
             let config = Config::load(&project_root)?;
             relink_worktree(&project_root, &name, &config)?;
             println!("Re-linked files for worktree '{}'", name);
+        }
+
+        Commands::Import { all } => {
+            if !all {
+                anyhow::bail!("Only --all is supported for import");
+            }
+
+            let config = Config::load(&project_root)?;
+            let report = import_all_worktrees(&project_root, &config)?;
+            if report.moved.is_empty() {
+                println!("No worktrees imported");
+            } else {
+                print_section("Imported worktrees", &report.moved, |item| {
+                    let mut line =
+                        format!("{}\t{}", item.from.display(), item.to.display());
+                    if let Some(err) = &item.relink_error {
+                        line.push_str(&format!("\t{}", err));
+                    }
+                    line
+                });
+            }
+
+            print_section("Skipped worktrees", &report.skipped, |item| {
+                format!("{}\t{}", item.path.display(), item.reason)
+            });
+
+            eprint_section("Failed to import worktrees", &report.failed, |item| {
+                format!("{}\t{}", item.path.display(), item.error)
+            });
         }
 
         Commands::Enter { name } => {
@@ -337,4 +373,30 @@ fn select_ignored_files(
     }
 
     Ok(selected)
+}
+
+fn print_section<T, F>(label: &str, items: &[T], mut render: F)
+where
+    F: FnMut(&T) -> String,
+{
+    if items.is_empty() {
+        return;
+    }
+    println!("{}:", label);
+    for item in items {
+        println!("{}", render(item));
+    }
+}
+
+fn eprint_section<T, F>(label: &str, items: &[T], mut render: F)
+where
+    F: FnMut(&T) -> String,
+{
+    if items.is_empty() {
+        return;
+    }
+    eprintln!("Warning: {}:", label);
+    for item in items {
+        eprintln!("{}", render(item));
+    }
 }
