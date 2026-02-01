@@ -48,6 +48,7 @@ enum Commands {
     },
 
     /// List all worktrees managed by epiphyte
+    #[command(visible_alias = "ls")]
     List,
 
     /// Re-link/copy files from config to an existing worktree
@@ -86,6 +87,7 @@ enum FilesCommands {
     },
 
     /// List files in the configuration
+    #[command(visible_alias = "ls")]
     List,
 }
 
