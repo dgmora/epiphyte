@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use inquire::error::InquireError;
+use inquire::Select;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -119,10 +121,27 @@ pub fn enter_worktree(worktree_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 pub struct Worktree {
     pub name: String,
     pub path: PathBuf,
     pub branch: String,
+}
+
+impl std::fmt::Display for Worktree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.branch.is_empty() {
+            write!(f, "{}  {}", self.name, self.path.display())
+        } else {
+            write!(
+                f,
+                "{}  [{}]  {}",
+                self.name,
+                self.branch,
+                self.path.display()
+            )
+        }
+    }
 }
 
 pub fn list_worktrees(project_root: &Path) -> Result<Vec<Worktree>> {
@@ -192,6 +211,23 @@ pub fn list_worktrees(project_root: &Path) -> Result<Vec<Worktree>> {
     }
 
     Ok(worktrees)
+}
+
+pub fn select_worktree_name(project_root: &Path) -> Result<Option<String>> {
+    let worktrees = list_worktrees(project_root)?;
+    if worktrees.is_empty() {
+        anyhow::bail!("No worktrees found.");
+    }
+    if worktrees.len() == 1 {
+        return Ok(Some(worktrees[0].name.clone()));
+    }
+
+    let selection = Select::new("Select worktree", worktrees).prompt();
+    match selection {
+        Ok(worktree) => Ok(Some(worktree.name)),
+        Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => Ok(None),
+        Err(err) => Err(err).context("Failed to prompt for worktree selection"),
+    }
 }
 
 fn format_worktree_list(project_root: &Path) -> Result<String> {

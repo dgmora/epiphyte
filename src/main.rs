@@ -6,8 +6,9 @@ use clap::{Parser, Subcommand};
 
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
-    add_worktree, ensure_on_main_branch, enter_worktree, get_worktree_path, list_worktrees,
-    relink_worktree, resolve_worktree_name,
+    add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
+    get_worktree_path, list_worktrees, relink_worktree, resolve_worktree_name,
+    select_worktree_name,
 };
 
 #[derive(Parser)]
@@ -131,7 +132,16 @@ fn main() -> Result<()> {
         }
 
         Commands::Enter { name } => {
-            let name = resolve_worktree_name(&project_root, name.as_deref())?;
+            let name = match name {
+                Some(name) => name,
+                None => match select_worktree_name(&project_root)? {
+                    Some(name) => name,
+                    None => return Ok(()),
+                },
+            };
+            if detect_current_worktree(&project_root)?.as_deref() == Some(name.as_str()) {
+                return Ok(());
+            }
             let path = get_worktree_path(&project_root, &name)?;
             println!("Entering worktree '{}' at {}", name, path.display());
             enter_worktree(&path)?;
