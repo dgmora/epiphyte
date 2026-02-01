@@ -44,6 +44,31 @@ pub fn is_path_tracked(project_root: &Path, path: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
+pub fn list_ignored_files(project_root: &Path) -> Result<Vec<String>> {
+    let output = Command::new("git")
+        .args(["ls-files", "-i", "-o", "--exclude-standard"])
+        .current_dir(project_root)
+        .output()
+        .context("Failed to run git ls-files")?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut files: Vec<String> = stdout
+        .lines()
+        .filter(|line| !line.is_empty() && !line.contains('/'))
+        .map(|line| line.to_string())
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 pub fn ensure_on_main_branch(project_root: &Path, main_branch: &str) -> Result<()> {
     let current = get_current_branch(project_root)?;
     if current != main_branch {

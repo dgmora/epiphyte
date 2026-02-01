@@ -3,11 +3,13 @@ mod worktree;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use inquire::{error::InquireError, MultiSelect};
+use std::path::Path;
 
 use config::{find_project_root, Config, FileEntry, LinkType};
 use worktree::{
     add_worktree, detect_current_worktree, ensure_on_main_branch, enter_worktree,
-    get_worktree_path, is_path_tracked, list_worktrees, relink_worktree,
+    get_worktree_path, is_path_tracked, list_ignored_files, list_worktrees, relink_worktree,
     resolve_worktree_name, select_worktree_name,
 };
 
@@ -68,11 +70,15 @@ enum FilesCommands {
     /// Add a file to the configuration
     Add {
         /// Path to the file (relative to project root)
-        path: String,
+        path: Option<String>,
 
         /// Copy the file instead of symlinking
         #[arg(short, long)]
         copy: bool,
+
+        /// Add ignored files from the repository root (prompted)
+        #[arg(long)]
+        ignored: bool,
     },
 
     /// Remove a file from the configuration
@@ -164,28 +170,67 @@ fn main() -> Result<()> {
             let mut config = Config::load(&project_root)?;
 
             match files_cmd {
-                FilesCommands::Add { path, copy } => {
-                    // Check if already exists
-                    if config.files.iter().any(|f| f.path == path) {
-                        anyhow::bail!("File '{}' is already in the configuration", path);
-                    }
-                    if is_path_tracked(&project_root, &path)? {
-                        anyhow::bail!(
-                            "File '{}' is tracked by git; only untracked files can be added",
-                            path
-                        );
+                FilesCommands::Add {
+                    path,
+                    copy,
+                    ignored,
+                } => {
+                    let link_type = if copy {
+                        LinkType::Copy
+                    } else {
+                        LinkType::Symlink
+                    };
+
+                    let paths = match (ignored, path) {
+                        (true, Some(_)) => {
+                            anyhow::bail!("--ignored cannot be used with a path")
+                        }
+                        (true, None) => select_ignored_files(&project_root, &config)?,
+                        (false, Some(path)) => {
+                            if config.files.iter().any(|f| f.path == path) {
+                                anyhow::bail!(
+                                    "File '{}' is already in the configuration",
+                                    path
+                                );
+                            }
+                            if is_path_tracked(&project_root, &path)? {
+                                anyhow::bail!(
+                                    "File '{}' is tracked by git; only untracked files can be added",
+                                    path
+                                );
+                            }
+                            vec![path]
+                        }
+                        (false, None) => {
+                            anyhow::bail!(
+                                "Path is required unless --ignored is used"
+                            )
+                        }
+                    };
+
+                    if paths.is_empty() {
+                        return Ok(());
                     }
 
-                    config.files.push(FileEntry {
-                        path: path.clone(),
-                        link_type: if copy {
-                            LinkType::Copy
-                        } else {
-                            LinkType::Symlink
-                        },
-                    });
+                    let count = paths.len();
+                    let single_path = paths.first().cloned();
+                    config.files.extend(
+                        paths
+                            .into_iter()
+                            .map(|path| FileEntry {
+                                path,
+                                link_type: link_type.clone(),
+                            }),
+                    );
                     config.save(&project_root)?;
-                    println!("Added '{}' to configuration", path);
+                    if count == 1 {
+                        println!(
+                            "Added '{}' to configuration",
+                            single_path.unwrap()
+                        );
+                    } else {
+                        println!("Added {} file(s) to configuration", count);
+                    }
                 }
 
                 FilesCommands::Remove { path } => {
@@ -216,4 +261,43 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn select_ignored_files(
+    project_root: &Path,
+    config: &Config,
+) -> Result<Vec<String>> {
+    let candidates: Vec<String> = list_ignored_files(project_root)?
+        .into_iter()
+        .filter(|p| !config.files.iter().any(|f| f.path == *p))
+        .collect();
+
+    if candidates.is_empty() {
+        println!("No ignored files found to add");
+        return Ok(Vec::new());
+    }
+
+    let defaults: Vec<usize> = (0..candidates.len()).collect();
+    let selection = MultiSelect::new("Select root ignored files to add", candidates)
+        .with_default(&defaults)
+        .prompt();
+
+    let selected = match selection {
+        Ok(files) => files,
+        Err(InquireError::OperationCanceled)
+        | Err(InquireError::OperationInterrupted) => {
+            return Ok(Vec::new());
+        }
+        Err(err) => {
+            return Err(err)
+                .context("Failed to prompt for ignored file selection")
+        }
+    };
+
+    if selected.is_empty() {
+        println!("No files selected");
+        return Ok(Vec::new());
+    }
+
+    Ok(selected)
 }
