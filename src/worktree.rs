@@ -257,9 +257,10 @@ pub fn select_worktree_name(project_root: &Path) -> Result<Option<String>> {
         return Ok(Some(worktrees[0].name.clone()));
     }
 
-    let selection = Select::new("Select worktree", worktrees).prompt();
+    let names: Vec<String> = worktrees.into_iter().map(|wt| wt.name).collect();
+    let selection = Select::new("Select worktree", names).prompt();
     match selection {
-        Ok(worktree) => Ok(Some(worktree.name)),
+        Ok(name) => Ok(Some(name)),
         Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => Ok(None),
         Err(err) => Err(err).context("Failed to prompt for worktree selection"),
     }
